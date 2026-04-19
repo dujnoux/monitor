@@ -487,6 +487,9 @@
     let seenCommentIds    = new Set();
     let openedUrls        = new Set();
     let audioCtx          = null;
+    let originalTitle     = null;
+    let titleInterval     = null;
+    let notifPermission   = 'default';
 
     // ── Ntfy ───────────────────────────────────────────────────────────────
     async function sendNtfy(title, message) {
@@ -511,6 +514,71 @@
         addLog('Ntfy error: ' + e.message);
       }
     }
+
+    // ── Attention grabbers ────────────────────────────────────────────────
+    async function requestNotifPermission() {
+      if (!('Notification' in window)) return;
+      if (Notification.permission === 'granted') {
+        notifPermission = 'granted';
+        return;
+      }
+      if (Notification.permission !== 'denied') {
+        const result = await Notification.requestPermission();
+        notifPermission = result;
+        addLog('Notifications: ' + result);
+      }
+    }
+
+    function showDesktopNotif(title, body, isUrgent = false) {
+      if (notifPermission !== 'granted') return;
+      try {
+        const notif = new Notification(title, {
+          body: body,
+          icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23e8401c" width="100" height="100"/><text x="50" y="70" font-size="70" text-anchor="middle" fill="white">🎟</text></svg>',
+          requireInteraction: isUrgent,
+          tag: isUrgent ? 'ticket' : 'post',
+        });
+        notif.onclick = () => {
+          window.focus();
+          notif.close();
+        };
+      } catch(e) {}
+    }
+
+    function setFavicon(color) {
+      const link = document.querySelector("link[rel*='icon']") || document.createElement('link');
+      link.type = 'image/svg+xml';
+      link.rel = 'icon';
+      const bg = color || '#0a0a0a';
+      link.href = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="' + encodeURIComponent(bg) + '" width="100" height="100"/><text x="50" y="72" font-size="70" text-anchor="middle" fill="white">🔥</text></svg>';
+      document.head.appendChild(link);
+    }
+
+    function startTitleBlink(message) {
+      if (!originalTitle) originalTitle = document.title;
+      stopTitleBlink();
+      let toggle = false;
+      titleInterval = setInterval(() => {
+        document.title = toggle ? originalTitle : message;
+        setFavicon(toggle ? '#0a0a0a' : '#e8401c');
+        toggle = !toggle;
+      }, 800);
+    }
+
+    function stopTitleBlink() {
+      if (titleInterval) {
+        clearInterval(titleInterval);
+        titleInterval = null;
+      }
+      if (originalTitle) document.title = originalTitle;
+      setFavicon('#0a0a0a');
+    }
+
+    // Stop blinking when user focuses the tab back
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) stopTitleBlink();
+    });
+    window.addEventListener('focus', stopTitleBlink);
 
     // ── Audio ──────────────────────────────────────────────────────────────
     function getAudioCtx() {
@@ -661,6 +729,8 @@
           addLog(`NEW POST → "${title.slice(0, 70)}${title.length > 70 ? '…' : ''}"`, 'chg');
           setStatus('warn', 'new post detected!');
           playAlert(false);
+          startTitleBlink('🔥 NOUVEAU POST !');
+          showDesktopNotif('🔥 Nouveau post Hellfest', title.slice(0, 100), false);
           await sendNtfy('🔥 Nouveau post Hellfest !', `"${title.slice(0, 100)}" par u/${author}`);
           stopCommentMonitor();
           startCommentMonitor(permalink);
@@ -740,6 +810,8 @@
             addLog(`🎟 TICKET dans commentaire de u/${c.author}`, 'ticket');
             document.getElementById('ticket-banner').style.display = 'block';
             playAlert(true);
+            startTitleBlink('🎟 TICKET DISPO !!!');
+            showDesktopNotif('🎟 TICKET Hellfest disponible !', `Lien détecté dans un commentaire de u/${c.author}`, true);
             await sendNtfy('🎟 TICKET Hellfest disponible !', `Lien détecté dans un commentaire de u/${c.author} — ouvre l'app maintenant !`);
           } else if (seenCommentIds.size > 1) {
             addLog(`💬 Nouveau commentaire de u/${c.author}`);
@@ -780,6 +852,8 @@
       document.getElementById('btn-stop').disabled  = false;
       setStatus('on', 'starting…');
       addLog('Monitor started');
+      requestNotifPermission();
+      setFavicon('#0a0a0a');
       checkPost();
       const secs = parseInt(document.getElementById('interval').value, 10);
       intervalId = setInterval(checkPost, secs * 1000);
