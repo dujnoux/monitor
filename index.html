@@ -671,13 +671,30 @@
       return foundTicket;
     }
 
+    // ── Resilient fetch with fallback ──────────────────────────────────────
+    async function fetchWithFallback(redditUrl) {
+      const sources = [
+        { name: 'direct',     url: redditUrl },
+        { name: 'corsproxy',  url: 'https://corsproxy.io/?' + encodeURIComponent(redditUrl) },
+      ];
+      let lastError = null;
+      for (const source of sources) {
+        try {
+          const res = await fetch(source.url, { headers: { Accept: 'application/json' } });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          return data;
+        } catch(e) {
+          lastError = e;
+          // Continue to next source silently
+        }
+      }
+      throw lastError || new Error('All sources failed');
+    }
+
     // ── Post fetching ──────────────────────────────────────────────────────
     async function fetchTopPost() {
-      const res = await fetch('https://www.reddit.com/r/Hellfest/new.json?limit=1&raw_json=1', {
-        headers: { Accept: 'application/json' }
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
+      const data = await fetchWithFallback('https://www.reddit.com/r/Hellfest/new.json?limit=1&raw_json=1');
       const post = data?.data?.children?.[0]?.data;
       if (!post) throw new Error('No post data');
       return post;
@@ -748,10 +765,7 @@
 
     // ── Comment fetching ───────────────────────────────────────────────────
     async function fetchComments(permalink) {
-      const url = `https://www.reddit.com${permalink}.json?limit=100&raw_json=1`;
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
+      const data = await fetchWithFallback(`https://www.reddit.com${permalink}.json?limit=100&raw_json=1`);
       // data[1] contient les commentaires
       return data?.[1]?.data?.children?.map(c => c.data).filter(c => c.body) || [];
     }
